@@ -44,10 +44,11 @@ ArUcoTrackingAppCoordinator (MonoBehaviour)
 ```
 
 **Spatial Anchor Flow:**
-1. Erster Frame mit neuem Marker: `EstimatePose` positioniert das GameObject → `CreateAnchorAsync` startet
-2. Marker in `m_pendingAnchorMarkerIds` → `EstimatePose` ignoriert ihn → Objekt friert ein
-3. Nach `WhenLocalizedAsync()`: `OVRSpatialAnchor` übernimmt Transform-Kontrolle dauerhaft; Zeitstempel in `_markerAnchorTimes` gespeichert
-4. Bei Fehler: Anchor wird entfernt, nächste Detection versucht es erneut
+1. Marker erkannt → `EstimatePose` positioniert das GameObject, Stabilisierungszähler (`_markerDetectionCounts`) zählt hoch
+2. Nach `_stabilizationFrameCount` Frames (default 10): Pose-Smoothing hat konvergiert → `CreateAnchorAsync` startet
+3. Marker in `m_pendingAnchorMarkerIds` → `EstimatePose` ignoriert ihn → Objekt friert ein
+4. Nach `WhenLocalizedAsync()`: `OVRSpatialAnchor` übernimmt Transform-Kontrolle dauerhaft; Zeitstempel in `_markerAnchorTimes` gespeichert
+5. Bei Fehler: Anchor wird entfernt, nächste Detection versucht es erneut
 
 **Anchor Refresh:**
 - Jeder Marker hat seinen eigenen unabhängigen Timer (`_markerAnchorTimes: Dictionary<int, float>`).
