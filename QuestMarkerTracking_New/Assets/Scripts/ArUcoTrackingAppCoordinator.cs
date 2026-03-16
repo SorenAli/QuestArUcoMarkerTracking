@@ -43,8 +43,8 @@ namespace TryAR.MarkerTracking
 
         [Header("Anchor Refresh")]
         [SerializeField] private float _anchorRefreshInterval = 10f;
-        private float _lastAnchorRefreshTime;
-        private bool _refreshPending;
+        private Dictionary<int, float> _markerAnchorTimes = new Dictionary<int, float>();
+        private HashSet<int> _markersNeedingRefresh = new HashSet<int>();
 
         private Texture2D m_resultTexture;
 
@@ -178,39 +178,49 @@ namespace TryAR.MarkerTracking
         }
 
         /// <summary>
-        /// Checks whether anchors should be refreshed (timer or Button B) and resets them
-        /// for currently visible markers. Stays pending until at least one marker is detected.
+        /// Checks per-marker timers and Button B to determine which anchors need refreshing.
+        /// Each marker has its own independent timer. Pending refresh waits until the marker
+        /// is visible before destroying and recreating the anchor.
         /// </summary>
         private void CheckAnchorRefresh()
         {
-            // Timer elapsed → go pending
-            if (!_refreshPending && Time.time - _lastAnchorRefreshTime >= _anchorRefreshInterval)
-                _refreshPending = true;
+            // Per-marker timer: queue refresh for any anchored marker whose interval has elapsed
+            foreach (var kvp in m_markerAnchors)
+            {
+                int id = kvp.Key;
+                if (!_markersNeedingRefresh.Contains(id) &&
+                    _markerAnchorTimes.TryGetValue(id, out float t) &&
+                    Time.time - t >= _anchorRefreshInterval)
+                {
+                    _markersNeedingRefresh.Add(id);
+                }
+            }
 
-            // Button B → immediate pending
-            if (OVRInput.GetDown(OVRInput.Button.Two))
-                _refreshPending = true;
+            // Button B (held) → continuously queue all anchored markers for refresh while pressed
+            if (OVRInput.Get(OVRInput.Button.Two))
+            {
+                foreach (int id in m_markerAnchors.Keys)
+                    _markersNeedingRefresh.Add(id);
+            }
 
-            if (!_refreshPending) return;
+            if (_markersNeedingRefresh.Count == 0) return;
 
-            // Wait until at least one marker is visible
+            // Only reset markers that are currently visible; others stay pending until seen again
             var detectedIds = m_arucoMarkerTracking.GetDetectedMarkerIds();
-            if (detectedIds.Count == 0) return;
-
-            // Destroy anchors for all currently visible markers so EstimatePose + CreateAnchorAsync run next frame
             foreach (int id in detectedIds)
             {
+                if (!_markersNeedingRefresh.Contains(id)) continue;
+
                 if (m_markerAnchors.TryGetValue(id, out var anchor))
                 {
                     if (anchor != null) Destroy(anchor);
                     m_markerAnchors.Remove(id);
                 }
                 m_pendingAnchorMarkerIds.Remove(id);
+                _markerAnchorTimes.Remove(id);
+                _markersNeedingRefresh.Remove(id);
+                Debug.Log($"[AnchorRefresh] Reset anchor for marker {id}");
             }
-
-            _refreshPending = false;
-            _lastAnchorRefreshTime = Time.time;
-            Debug.Log($"[AnchorRefresh] Reset {detectedIds.Count} anchor(s)");
         }
 
         /// <summary>
@@ -228,6 +238,7 @@ namespace TryAR.MarkerTracking
             if (localized && anchor != null && anchor.Created)
             {
                 m_markerAnchors[markerId] = anchor;
+                _markerAnchorTimes[markerId] = Time.time;
                 Debug.Log($"Spatial anchor created for marker {markerId} at {targetObject.transform.position}");
             }
             else
@@ -339,7 +350,6 @@ namespace TryAR.MarkerTracking
         /// </summary>
         private void UpdateCameraPoses()
         {
-            // Update camera anchor position and rotation
             var cameraPose = m_passthroughCameraAccess.GetCameraPose();
             m_cameraAnchor.position = cameraPose.position;
             m_cameraAnchor.rotation = cameraPose.rotation;

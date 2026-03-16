@@ -38,6 +38,7 @@ ArUcoTrackingAppCoordinator (MonoBehaviour)
   │     │     ├── DetectMarker()      → OpenCV: Texture → Mat → detectMarkers()
   │     │     ├── EstimatePoseCanonicalMarker()  → solvePnP → Transform (nur ohne Anchor)
   │     │     └── CreateAnchorAsync() → OVRSpatialAnchor auf GameObject, session-only
+  │     ├── CheckAnchorRefresh()      → per-Marker-Timer + Button B
   │     └── HandleVisualizationToggle() → OVR Button.One togglet Debug-View
   └── m_markerAnchors: Dictionary<int, OVRSpatialAnchor>  (pro Marker-ID)
 ```
@@ -45,8 +46,14 @@ ArUcoTrackingAppCoordinator (MonoBehaviour)
 **Spatial Anchor Flow:**
 1. Erster Frame mit neuem Marker: `EstimatePose` positioniert das GameObject → `CreateAnchorAsync` startet
 2. Marker in `m_pendingAnchorMarkerIds` → `EstimatePose` ignoriert ihn → Objekt friert ein
-3. Nach `WhenLocalizedAsync()`: `OVRSpatialAnchor` übernimmt Transform-Kontrolle dauerhaft
+3. Nach `WhenLocalizedAsync()`: `OVRSpatialAnchor` übernimmt Transform-Kontrolle dauerhaft; Zeitstempel in `_markerAnchorTimes` gespeichert
 4. Bei Fehler: Anchor wird entfernt, nächste Detection versucht es erneut
+
+**Anchor Refresh:**
+- Jeder Marker hat seinen eigenen unabhängigen Timer (`_markerAnchorTimes: Dictionary<int, float>`).
+- Nach `_anchorRefreshInterval` (default 10s): Marker kommt in `_markersNeedingRefresh`. Reset passiert erst wenn der Marker wieder sichtbar ist.
+- **Button B (OVRInput.Button.Two, gehalten):** Solange gedrückt werden alle sichtbaren Marker-Anchors kontinuierlich zurückgesetzt → Objekt folgt dem Marker live. Beim Loslassen wird neuer Anchor fixiert.
+- **Button A (OVRInput.Button.One):** Togglet Debug-Kameraansicht.
 
 Zwei parallele Varianten:
 - **ArUco**: `ArUcoTrackingAppCoordinator` + `ArUcoMarkerTracking` – einzelne Marker, ID→GameObject-Map
@@ -59,7 +66,7 @@ Zwei parallele Varianten:
 | Datei | Aufgabe |
 |---|---|
 | `Assets/Scripts/ArUcoMarkerTracking.cs` | OpenCV Detection + solvePnP-Pose. `GetDetectedMarkerIds()` gibt aktuelle IDs zurück |
-| `Assets/Scripts/ArUcoTrackingAppCoordinator.cs` | App-Logik, Kamera-Init, Spatial Anchor Management |
+| `Assets/Scripts/ArUcoTrackingAppCoordinator.cs` | App-Logik, Kamera-Init, Spatial Anchor Management inkl. Refresh |
 | `Assets/Scripts/ChArUcoMarkerTracking.cs` | OpenCV Detection + solvePnP für ChArUco-Boards |
 | `Assets/Scripts/ChArUcoTrackingAppCoordinator.cs` | App-Logik für ChArUco |
 | `Assets/Scripts/CameraImageAduster.cs` | Passt Quad-Skalierung an Kameraintrinsics an |
