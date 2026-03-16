@@ -1,12 +1,26 @@
-# QuestArUcoMarkerTracking – Claude Code Context
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Projektübersicht
 
-Unity-AR-Anwendung für Meta Quest, die ArUco-Marker per OpenCV erkennt und 3D-GameObjects in Echtzeit an Markerpositionen platziert. Nutzt die Passthrough-Kamera der Quest, um Marker im physischen Raum zu tracken.
+Unity 6 (6000.3.2f1) AR-Anwendung für Meta Quest. ArUco-Marker werden per OpenCV erkannt, 3D-GameObjects per `solvePnP` im Raum platziert. Bei erster Erkennung wird ein `OVRSpatialAnchor` gesetzt, der das Objekt dauerhaft im Raum verankert.
 
 **Namespace:** `TryAR.MarkerTracking`
-**Hauptszene:** `Assets/Scenes/SampleScene.unity`
-**Build-Ziel:** Android (Meta Quest)
+**Aktive Szene:** `Assets/1 - ArUcoMarkerTracking.unity`
+**Build-Ziel:** Android (Meta Quest), IL2CPP, arm64
+
+---
+
+## Build
+
+Android Build aus Unity Editor: **File → Build Settings → Build And Run**
+
+**Bekanntes Problem – Meta XR SDK 85.0.0 Bug:**
+`UpdateManifestWithCodeSample` sucht rekursiv nach allen `AndroidManifest.xml` und findet dabei veraltete Gradle-Build-Artefakte aus vorherigen Builds. Der Workaround `Assets/Editor/MetaXRManifestWorkaround.cs` löscht das `xrmanifest.androidlib/build/` Verzeichnis vor dem Meta-SDK-Callback (callbackOrder -1).
+
+**Bei Out-of-Memory Fehler (llvm-objcopy):**
+Build Settings → **"Create symbols.zip" → Disabled** oder **Development Build** aktivieren.
 
 ---
 
@@ -16,31 +30,40 @@ Unity-AR-Anwendung für Meta Quest, die ArUco-Marker per OpenCV erkennt und 3D-G
 PassthroughCameraAccess (Meta XR SDK)
         │
         ▼
-AppCoordinator (MonoBehaviour)
-  ├── InitializeMarkerTracking()  → liest Kamerakalibrierung, initialisiert Tracker
+ArUcoTrackingAppCoordinator (MonoBehaviour)
+  ├── Start()              → wartet auf Kamera, liest Intrinsics, initialisiert Tracker
   ├── Update()
-  │     ├── UpdateCameraPoses()   → setzt CameraAnchor-Transform
-  │     └── ProcessMarkerTracking()
-  │           ├── DetectMarker()  → OpenCV Detection
-  │           └── EstimatePose()  → solvePnP → GameObject positionieren
-  └── HandleVisualizationToggle() → OVR Button.One togglet Debug-View
+  │     ├── UpdateCameraPoses()       → setzt m_cameraAnchor auf aktuelle Kamerapose
+  │     ├── ProcessMarkerTracking()
+  │     │     ├── DetectMarker()      → OpenCV: Texture → Mat → detectMarkers()
+  │     │     ├── EstimatePoseCanonicalMarker()  → solvePnP → Transform (nur ohne Anchor)
+  │     │     └── CreateAnchorAsync() → OVRSpatialAnchor auf GameObject, session-only
+  │     └── HandleVisualizationToggle() → OVR Button.One togglet Debug-View
+  └── m_markerAnchors: Dictionary<int, OVRSpatialAnchor>  (pro Marker-ID)
 ```
 
+**Spatial Anchor Flow:**
+1. Erster Frame mit neuem Marker: `EstimatePose` positioniert das GameObject → `CreateAnchorAsync` startet
+2. Marker in `m_pendingAnchorMarkerIds` → `EstimatePose` ignoriert ihn → Objekt friert ein
+3. Nach `WhenLocalizedAsync()`: `OVRSpatialAnchor` übernimmt Transform-Kontrolle dauerhaft
+4. Bei Fehler: Anchor wird entfernt, nächste Detection versucht es erneut
+
 Zwei parallele Varianten:
-- **Standard ArUco**: `ArUcoTrackingAppCoordinator` + `ArUcoMarkerTracking` – einzelne Marker, ID→GameObject-Mapping
-- **ChArUco**: `ChArUcoTrackingAppCoordinator` + `ChArUcoMarkerTracking` – Schachbrett-Marker, einzelnes Zielobjekt
+- **ArUco**: `ArUcoTrackingAppCoordinator` + `ArUcoMarkerTracking` – einzelne Marker, ID→GameObject-Map
+- **ChArUco**: `ChArUcoTrackingAppCoordinator` + `ChArUcoMarkerTracking` – Schachbrettboard, ein Zielobjekt
 
 ---
 
-## Scripts (`Assets/Scripts/`)
+## Scripts
 
-| Datei | Klasse | Aufgabe |
-|---|---|---|
-| [ArUcoMarkerTracking.cs](Assets/Scripts/ArUcoMarkerTracking.cs) | `ArUcoMarkerTracking` | OpenCV Detection + PnP-Pose für einzelne Marker |
-| [ArUcoTrackingAppCoordinator.cs](Assets/Scripts/ArUcoTrackingAppCoordinator.cs) | `ArUcoTrackingAppCoordinator` | App-Logik, Kamera-Init, Update-Loop für ArUco |
-| [ChArUcoMarkerTracking.cs](Assets/Scripts/ChArUcoMarkerTracking.cs) | `ChArUcoMarkerTracking` | OpenCV Detection + PnP-Pose für ChArUco-Boards |
-| [ChArUcoTrackingAppCoordinator.cs](Assets/Scripts/ChArUcoTrackingAppCoordinator.cs) | `ChArUcoTrackingAppCoordinator` | App-Logik für ChArUco |
-| [CameraImageAduster.cs](Assets/Scripts/CameraImageAduster.cs) | `CameraImageAduster` | Passt Quad-Skalierung an Kameraintrinsics an |
+| Datei | Aufgabe |
+|---|---|
+| `Assets/Scripts/ArUcoMarkerTracking.cs` | OpenCV Detection + solvePnP-Pose. `GetDetectedMarkerIds()` gibt aktuelle IDs zurück |
+| `Assets/Scripts/ArUcoTrackingAppCoordinator.cs` | App-Logik, Kamera-Init, Spatial Anchor Management |
+| `Assets/Scripts/ChArUcoMarkerTracking.cs` | OpenCV Detection + solvePnP für ChArUco-Boards |
+| `Assets/Scripts/ChArUcoTrackingAppCoordinator.cs` | App-Logik für ChArUco |
+| `Assets/Scripts/CameraImageAduster.cs` | Passt Quad-Skalierung an Kameraintrinsics an |
+| `Assets/Editor/MetaXRManifestWorkaround.cs` | Build-Fix: löscht stale Gradle-Artefakte vor Meta SDK Callback |
 
 ---
 
@@ -48,63 +71,39 @@ Zwei parallele Varianten:
 
 | Package | Version | Zweck |
 |---|---|---|
-| `com.meta.xr.sdk.all` | 85.0.0 | Meta Quest SDK (PassthroughCameraAccess, OVRInput) |
-| OpenCV for Unity | – | Asset (nicht im manifest), in `Assets/OpenCVForUnity/` |
+| `com.meta.xr.sdk.all` | 85.0.0 | Meta Quest SDK (PassthroughCameraAccess, OVRSpatialAnchor, OVRInput) |
+| OpenCV for Unity | – | Asset in `Assets/OpenCVForUnity/` (nicht im manifest.json) |
 | `com.unity.xr.openxr` | 1.16.1 | XR Foundation |
 | `com.unity.xr.meta-openxr` | 2.4.0 | Meta OpenXR Extension |
 | `com.unity.render-pipelines.universal` | 17.3.0 | URP |
-| `com.ivanmurzak.unity.mcp` | 0.54.0 | MCP Unity Bridge (Claude Code Integration) |
+| `com.ivanmurzak.unity.mcp` | 0.54.0 | MCP Unity Bridge |
 
 ---
 
 ## Wichtige Konzepte
 
 ### Kamerakalibrierung
-`PassthroughCameraAccess.Intrinsics` liefert `fx, fy, cx, cy` und `SensorResolution`. Falls `CurrentResolution` abweicht, werden die Intrinsics skaliert. Distortion ist immer 0 (Quest-Kameras sind bereits entzerrt).
+`PassthroughCameraAccess.Intrinsics` liefert `fx, fy, cx, cy` + `SensorResolution`. Falls `CurrentResolution` abweicht, werden Intrinsics skaliert. Distortion ist immer 0 (Quest-Kameras vorverzeichnet).
 
 ### Image Pipeline
 ```
-Quest Kamera → Texture → Texture2D → OpenCV Mat (RGBA)
-  → resize (÷ divideNumber)
-  → cvtColor (RGBA→RGB)
-  → detectMarkers()
-  → solvePnP()
+Quest Kamera → Texture → Texture2D → Mat (RGBA)
+  → resize (÷ _divideNumber)  → cvtColor RGBA→RGB
+  → detectMarkers() → solvePnP()
   → ARUtils.ConvertRvecTvecToPoseData()
   → camTransform.localToWorldMatrix * arMatrix
-  → SetTransformFromMatrix(targetObject)
+  → SetTransformFromMatrix(targetObject)   ← nur wenn kein Anchor aktiv
 ```
 
+### _divideNumber
+Default 2 – halbiert Verarbeitungsauflösung. Intrinsics werden entsprechend skaliert.
+
 ### Pose-Smoothing
-Low-Pass Filter via `Vector3.Lerp` / `Quaternion.Slerp` mit `_poseFilterCoefficient` (0–1, höher = mehr Glättung). Gespeichert pro Marker-ID in `_prevPoseDataDictionary`.
+`Vector3.Lerp` / `Quaternion.Slerp` mit `_poseFilterCoefficient` (0–1). Pro Marker-ID in `_prevPoseDataDictionary`.
 
-### DivideNumber
-`_divideNumber` (default 2) halbiert die Verarbeitungsauflösung. Intrinsics werden entsprechend skaliert. Höher = schneller, aber ungenauer.
+### Szene
+`[BuildingBlock] Spatial Anchor Core` ist bereits in der Szene – Voraussetzung für `OVRSpatialAnchor`.
+AR-Objekte (`ARGameObject_0`, `ARGameObject_1`) sind Root-GameObjects; `OVRSpatialAnchor` wird zur Laufzeit per `AddComponent` hinzugefügt.
 
-### Visualisierungs-Toggle
-OVR Button.One togglet zwischen Debug-Camera-View (`m_debugRenderer` mit `resultTexture`) und AR-Objekt-Ansicht.
-
----
-
-## Marker-Setup (ArUco)
-
-In `ArUcoTrackingAppCoordinator` im Inspector:
-- `m_markerGameObjectPairs`: Liste von `{markerId (int), gameObject}` – mappt Marker-IDs auf 3D-Objekte
-- `_dictionaryId`: ArUco-Dictionary (default `DICT_4X4_50`)
-- `_markerLength`: physische Markergröße in Metern (default 0.1m)
-
----
-
-## ChArUco-Board-Setup
-
-- `_squaresX` / `_squaresY`: Board-Größe in Feldern
-- `_squareLength`: Schachbrettfeld-Größe in Metern
-- `_markerLength`: ArUco-Marker-Größe innerhalb des Boards
-- `_charucoMinMarkers`: Mindestanzahl erkannter Marker für Pose (default 2, effektiv 4 wegen `_charucoIds.total() < 4`)
-
----
-
-## Build
-
-- Platform: Android
-- Target: Meta Quest (OpenXR + Meta XR SDK)
-- Permissions: Passthrough Camera muss in den Quest App-Einstellungen aktiviert sein
+### ChArUco-Sonderfall
+Pose wird nur berechnet wenn `_charucoIds.total() >= 4` (trotz `_charucoMinMarkers = 2`). Rotation wird um 180° um X gedreht (`poseData.rot * Quaternion.Euler(180, 0, 0)`).
