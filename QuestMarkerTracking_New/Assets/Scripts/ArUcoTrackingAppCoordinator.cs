@@ -41,11 +41,16 @@ namespace TryAR.MarkerTracking
         private Dictionary<int, OVRSpatialAnchor> m_markerAnchors = new Dictionary<int, OVRSpatialAnchor>();
         private HashSet<int> m_pendingAnchorMarkerIds = new HashSet<int>();
 
+        [Header("Anchor Refresh")]
+        [SerializeField] private float _anchorRefreshInterval = 10f;
+        private float _lastAnchorRefreshTime;
+        private bool _refreshPending;
+
         private Texture2D m_resultTexture;
 
         private Transform m_cameraAnchor;
 
-        
+
         private bool m_showRecogResult = false;
 
         /// <summary>
@@ -125,6 +130,7 @@ namespace TryAR.MarkerTracking
             // are positioned in the scene according to marker positions
             //======================================================================================
             ProcessMarkerTracking();
+            CheckAnchorRefresh();
         }
 
         /// <summary>
@@ -169,6 +175,42 @@ namespace TryAR.MarkerTracking
                     if (m_markerGameObjectDictionary.TryGetValue(id, out var go))
                         CreateAnchorAsync(id, go);
             }
+        }
+
+        /// <summary>
+        /// Checks whether anchors should be refreshed (timer or Button B) and resets them
+        /// for currently visible markers. Stays pending until at least one marker is detected.
+        /// </summary>
+        private void CheckAnchorRefresh()
+        {
+            // Timer elapsed → go pending
+            if (!_refreshPending && Time.time - _lastAnchorRefreshTime >= _anchorRefreshInterval)
+                _refreshPending = true;
+
+            // Button B → immediate pending
+            if (OVRInput.GetDown(OVRInput.Button.Two))
+                _refreshPending = true;
+
+            if (!_refreshPending) return;
+
+            // Wait until at least one marker is visible
+            var detectedIds = m_arucoMarkerTracking.GetDetectedMarkerIds();
+            if (detectedIds.Count == 0) return;
+
+            // Destroy anchors for all currently visible markers so EstimatePose + CreateAnchorAsync run next frame
+            foreach (int id in detectedIds)
+            {
+                if (m_markerAnchors.TryGetValue(id, out var anchor))
+                {
+                    if (anchor != null) Destroy(anchor);
+                    m_markerAnchors.Remove(id);
+                }
+                m_pendingAnchorMarkerIds.Remove(id);
+            }
+
+            _refreshPending = false;
+            _lastAnchorRefreshTime = Time.time;
+            Debug.Log($"[AnchorRefresh] Reset {detectedIds.Count} anchor(s)");
         }
 
         /// <summary>
