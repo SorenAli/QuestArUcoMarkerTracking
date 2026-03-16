@@ -43,8 +43,10 @@ namespace TryAR.MarkerTracking
 
         [Header("Anchor Refresh")]
         [SerializeField] private float _anchorRefreshInterval = 10f;
+        [SerializeField] private int _stabilizationFrameCount = 10;
         private Dictionary<int, float> _markerAnchorTimes = new Dictionary<int, float>();
         private HashSet<int> _markersNeedingRefresh = new HashSet<int>();
+        private Dictionary<int, int> _markerDetectionCounts = new Dictionary<int, int>();
 
         private Texture2D m_resultTexture;
 
@@ -168,12 +170,26 @@ namespace TryAR.MarkerTracking
             }
             m_arucoMarkerTracking.EstimatePoseCanonicalMarker(trackingDict, m_cameraAnchor);
 
-            // Step 3: Create a spatial anchor for newly detected markers
+            // Step 3: Stabilize before anchoring – track for N frames, then create anchor
             foreach (int id in m_arucoMarkerTracking.GetDetectedMarkerIds())
             {
-                if (!m_markerAnchors.ContainsKey(id) && !m_pendingAnchorMarkerIds.Contains(id))
-                    if (m_markerGameObjectDictionary.TryGetValue(id, out var go))
-                        CreateAnchorAsync(id, go);
+                if (m_markerAnchors.ContainsKey(id) || m_pendingAnchorMarkerIds.Contains(id))
+                    continue;
+                if (!m_markerGameObjectDictionary.TryGetValue(id, out var go))
+                    continue;
+
+                // While Button B is held: live tracking only, no anchor creation
+                if (OVRInput.Get(OVRInput.Button.Two))
+                    continue;
+
+                _markerDetectionCounts.TryGetValue(id, out int count);
+                _markerDetectionCounts[id] = count + 1;
+
+                if (count + 1 >= _stabilizationFrameCount)
+                {
+                    _markerDetectionCounts.Remove(id);
+                    CreateAnchorAsync(id, go);
+                }
             }
         }
 
@@ -218,6 +234,7 @@ namespace TryAR.MarkerTracking
                 }
                 m_pendingAnchorMarkerIds.Remove(id);
                 _markerAnchorTimes.Remove(id);
+                _markerDetectionCounts.Remove(id);
                 _markersNeedingRefresh.Remove(id);
                 Debug.Log($"[AnchorRefresh] Reset anchor for marker {id}");
             }
