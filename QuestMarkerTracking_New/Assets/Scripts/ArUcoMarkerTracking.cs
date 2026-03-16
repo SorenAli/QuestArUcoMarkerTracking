@@ -366,6 +366,18 @@ namespace TryAR.MarkerTracking
         }
 
         /// <summary>
+        /// Returns the list of marker IDs detected in the most recent DetectMarker call.
+        /// </summary>
+        public List<int> GetDetectedMarkerIds()
+        {
+            var ids = new List<int>();
+            if (!_isReady || _detectedMarkerIds == null) return ids;
+            for (int i = 0; i < _detectedMarkerIds.total(); i++)
+                ids.Add((int)_detectedMarkerIds.get(i, 0)[0]);
+            return ids;
+        }
+
+        /// <summary>
         /// Explicitly release resources when the object is disposed
         /// </summary>
         public void Dispose()

@@ -38,7 +38,9 @@ namespace TryAR.MarkerTracking
         [SerializeField] MeshRenderer m_debugRenderer;
 
         private Dictionary<int, GameObject> m_markerGameObjectDictionary = new Dictionary<int, GameObject>();
-       
+        private Dictionary<int, OVRSpatialAnchor> m_markerAnchors = new Dictionary<int, OVRSpatialAnchor>();
+        private HashSet<int> m_pendingAnchorMarkerIds = new HashSet<int>();
+
         private Texture2D m_resultTexture;
 
         private Transform m_cameraAnchor;
@@ -143,17 +145,56 @@ namespace TryAR.MarkerTracking
 
         /// <summary>
         /// Performs marker detection and pose estimation.
-        /// This is the core functionality that processes camera frames to detect markers
-        /// and position virtual objects in 3D space.
+        /// On first detection of a marker, a spatial anchor is created at its position.
+        /// Once anchored, the object's transform is managed by OVRSpatialAnchor.
         /// </summary>
         private void ProcessMarkerTracking()
         {
             // Step 1: Detect ArUco markers in the current camera frame
             m_arucoMarkerTracking.DetectMarker(m_passthroughCameraAccess.GetTexture(), m_resultTexture);
-            
-            // Step 2: Estimate the pose of markers and position 3D objects accordingly
-            // This maps the 2D marker positions to 3D space using the camera parameters
-            m_arucoMarkerTracking.EstimatePoseCanonicalMarker(m_markerGameObjectDictionary, m_cameraAnchor);
+
+            // Step 2: Only update transforms for markers that don't have an anchor yet
+            var trackingDict = new Dictionary<int, GameObject>();
+            foreach (var kvp in m_markerGameObjectDictionary)
+            {
+                if (!m_markerAnchors.ContainsKey(kvp.Key) && !m_pendingAnchorMarkerIds.Contains(kvp.Key))
+                    trackingDict[kvp.Key] = kvp.Value;
+            }
+            m_arucoMarkerTracking.EstimatePoseCanonicalMarker(trackingDict, m_cameraAnchor);
+
+            // Step 3: Create a spatial anchor for newly detected markers
+            foreach (int id in m_arucoMarkerTracking.GetDetectedMarkerIds())
+            {
+                if (!m_markerAnchors.ContainsKey(id) && !m_pendingAnchorMarkerIds.Contains(id))
+                    if (m_markerGameObjectDictionary.TryGetValue(id, out var go))
+                        CreateAnchorAsync(id, go);
+            }
+        }
+
+        /// <summary>
+        /// Creates an OVRSpatialAnchor on the target GameObject at its current world position.
+        /// Once localized, the anchor takes over transform control from marker tracking.
+        /// </summary>
+        private async void CreateAnchorAsync(int markerId, GameObject targetObject)
+        {
+            m_pendingAnchorMarkerIds.Add(markerId);
+
+            var anchor = targetObject.AddComponent<OVRSpatialAnchor>();
+
+            bool localized = await anchor.WhenLocalizedAsync();
+
+            if (localized && anchor != null && anchor.Created)
+            {
+                m_markerAnchors[markerId] = anchor;
+                Debug.Log($"Spatial anchor created for marker {markerId} at {targetObject.transform.position}");
+            }
+            else
+            {
+                // Localization failed – remove anchor so detection can retry next time
+                if (anchor != null) Destroy(anchor);
+            }
+
+            m_pendingAnchorMarkerIds.Remove(markerId);
         }
 
         /// <summary>
